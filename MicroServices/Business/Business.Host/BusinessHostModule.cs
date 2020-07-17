@@ -1,4 +1,5 @@
-﻿using Business.MultiTenancy;
+﻿using Business.EntityFrameworkCore;
+using Business.MultiTenancy;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.DataProtection;
@@ -12,23 +13,34 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
+using System.Security.Claims;
 using Volo.Abp;
 using Volo.Abp.AspNetCore.MultiTenancy;
 using Volo.Abp.AspNetCore.Mvc;
 using Volo.Abp.AspNetCore.Serilog;
+using Volo.Abp.AuditLogging.EntityFrameworkCore;
 using Volo.Abp.Autofac;
 using Volo.Abp.Caching;
+using Volo.Abp.Data;
+using Volo.Abp.EntityFrameworkCore;
+using Volo.Abp.EntityFrameworkCore.SqlServer;
 using Volo.Abp.Localization;
 using Volo.Abp.Modularity;
+using Volo.Abp.PermissionManagement.EntityFrameworkCore;
+using Volo.Abp.Security.Claims;
+using Volo.Abp.SettingManagement.EntityFrameworkCore;
+using Volo.Abp.TenantManagement.EntityFrameworkCore;
+using Volo.Abp.Threading;
 using Volo.Abp.VirtualFileSystem;
 
 namespace Business
 {
     [DependsOn(
         typeof(AbpAutofacModule),
+        typeof(AbpEntityFrameworkCoreSqlServerModule),
         typeof(BusinessHttpApiModule),
         typeof(BusinessApplicationModule),
+        typeof(BusinessEntityFrameworkCoreModule),
         typeof(AbpAspNetCoreMultiTenancyModule),
         typeof(AbpAspNetCoreSerilogModule)
     )]
@@ -41,14 +53,23 @@ namespace Business
             var configuration = context.Services.GetConfiguration();
             var hostingEnvironment = context.Services.GetHostingEnvironment();
 
-            ConfigureConventionalControllers();
+            //ConfigureConventionalControllers();
             ConfigureAuthentication(context, configuration);
             ConfigureLocalization();
+            //ConfigureSql();
             ConfigureCache(configuration);
             ConfigureVirtualFileSystem(context);
             ConfigureRedis(context, configuration, hostingEnvironment);
             ConfigureCors(context, configuration);
             ConfigureSwaggerServices(context);
+        }
+
+        private void ConfigureSql()
+        {
+            Configure<AbpDbContextOptions>(options =>
+            {
+                options.UseSqlServer();
+            });
         }
 
         private void ConfigureCache(IConfiguration configuration)
@@ -88,7 +109,7 @@ namespace Business
                 .AddIdentityServerAuthentication(options =>
                 {
                     options.Authority = configuration["AuthServer:Authority"];
-                    options.RequireHttpsMetadata = true;
+                    options.RequireHttpsMetadata = false;
                     options.ApiName = "BusinessService";
                 });
         }
@@ -171,6 +192,24 @@ namespace Business
                 app.UseMultiTenancy();
             }
             app.UseAuthorization();
+
+            app.Use(async (ctx, next) =>
+            {
+                var currentPrincipalAccessor = ctx.RequestServices.GetRequiredService<ICurrentPrincipalAccessor>();
+                var map = new Dictionary<string, string>()
+                {
+                    { "sub", AbpClaimTypes.UserId },
+                    { "role", AbpClaimTypes.Role },
+                    { "email", AbpClaimTypes.Email },
+                    { "name", AbpClaimTypes.UserName },
+                    { "tenantid", AbpClaimTypes.TenantId }
+                };
+                var mapClaims = currentPrincipalAccessor.Principal.Claims.Where(p => map.Keys.Contains(p.Type)).ToList();
+                currentPrincipalAccessor.Principal.AddIdentity(new ClaimsIdentity(mapClaims.Select(p => new Claim(map[p.Type], p.Value, p.ValueType, p.Issuer))));
+
+                await next();
+            });
+
             app.UseAbpRequestLocalization();
 
             app.UseSwagger();
@@ -181,7 +220,17 @@ namespace Business
 
             app.UseAuditing();
             app.UseAbpSerilogEnrichers();
-            app.UseMvcWithDefaultRouteAndArea();
+            app.UseConfiguredEndpoints();
+
+            AsyncHelper.RunSync(async () =>
+            {
+                using (var scope = context.ServiceProvider.CreateScope())
+                {
+                    await scope.ServiceProvider
+                        .GetRequiredService<IDataSeeder>()
+                        .SeedAsync();
+                }
+            });
         }
     }
 }

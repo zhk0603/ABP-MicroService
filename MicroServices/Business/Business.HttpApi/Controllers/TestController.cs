@@ -1,28 +1,24 @@
-﻿using Business.Models.Test;
+﻿using Business.Test;
 using Microsoft.AspNetCore.Mvc;
-using System;
-using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace Business.Controllers
 {
-    [Route("api/test")]
+    [Area("business")]
+    [Route("api/business/test")]
     public class TestController: BusinessController
     {
-        public TestController()
-        {
+        private readonly ITestAppService _testAppService;
 
+        public TestController(ITestAppService testAppService)
+        {
+            _testAppService = testAppService;
         }
 
         [HttpGet]
-        [Route("")]
-        public async Task<List<TestModel>> GetAsync()
+        public async Task<string> GetAsync()
         {
-            return new List<TestModel>
-            {
-                new TestModel {Name = "John", BirthDate = new DateTime(1942, 11, 18)},
-                new TestModel {Name = "Adams", BirthDate = new DateTime(1997, 05, 24)}
-            };
+            return await _testAppService.TestApi("1");
         }
     }
 }

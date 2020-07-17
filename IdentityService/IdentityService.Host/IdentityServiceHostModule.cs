@@ -22,6 +22,10 @@ using Volo.Abp.SettingManagement.EntityFrameworkCore;
 using Volo.Abp.AspNetCore.MultiTenancy;
 using Volo.Abp.TenantManagement.EntityFrameworkCore;
 using System;
+using Volo.Abp.TenantManagement;
+using Volo.Abp.Threading;
+using Volo.Abp.Data;
+using Volo.Abp.AspNetCore.Serilog;
 
 namespace IdentityService.Host
 {
@@ -33,9 +37,12 @@ namespace IdentityService.Host
         typeof(AbpPermissionManagementEntityFrameworkCoreModule),
         typeof(AbpSettingManagementEntityFrameworkCoreModule),
         typeof(AbpTenantManagementEntityFrameworkCoreModule),
+        typeof(AbpTenantManagementHttpApiModule),
+        typeof(AbpTenantManagementApplicationModule),
         typeof(AbpIdentityHttpApiModule),
         typeof(AbpIdentityEntityFrameworkCoreModule),
-        typeof(AbpIdentityApplicationModule)
+        typeof(AbpIdentityApplicationModule),
+        typeof(AbpAspNetCoreSerilogModule)
     )]
     public class IdentityServiceHostModule : AbpModule
     {
@@ -119,7 +126,18 @@ namespace IdentityService.Host
                 options.SwaggerEndpoint("/swagger/v1/swagger.json", "Identity Service API");
             });
             app.UseAuditing();
-            app.UseMvcWithDefaultRouteAndArea();
+            app.UseAbpSerilogEnrichers();
+            app.UseConfiguredEndpoints();
+
+            AsyncHelper.RunSync(async () =>
+            {
+                using (var scope = context.ServiceProvider.CreateScope())
+                {
+                    await scope.ServiceProvider
+                        .GetRequiredService<IDataSeeder>()
+                        .SeedAsync();
+                }
+            });
         }
     }
 }
